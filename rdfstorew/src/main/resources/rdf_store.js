@@ -6001,8 +6001,8 @@ var RDFLoader = {};
 // imports
 var N3Parser = RVN3Parser;
 RDFLoader.RDFLoader = function (params) {
-    this.precedences = ["text/turtle", "text/n3", "application/ld+json", "application/json"];
-    this.parsers = {"text/turtle":N3Parser.parser, "text/n3":N3Parser.parser, "application/ld+json":JSONLDParser.parser, "application/json":JSONLDParser.parser};
+    this.precedences = ["application/n-triples", "text/turtle", "application/ld+json", "application/json", "text/n3"];
+    this.parsers = {"application/n-triples":N3Parser.parser, "text/turtle": N3Parser.parser, "text/n3": N3Parser.parser, "application/ld+json": JSONLDParser.parser, "application/json": JSONLDParser.parser};
     if (params != null) {
         for (var mime in params["parsers"]) {
             this.parsers[mime] = params["parsers"][mime];
@@ -6019,14 +6019,16 @@ RDFLoader.RDFLoader = function (params) {
     }
 
     this.acceptHeaderValue = "";
+    var qstep = 0.6 / this.precedences.length;
     for (var i = 0; i < this.precedences.length; i++) {
-        if (i != 0) {
-            this.acceptHeaderValue = this.acceptHeaderValue + "," + this.precedences[i];
-        } else {
-            this.acceptHeaderValue = this.acceptHeaderValue + this.precedences[i];
+        var mimeqvalue = "" + this.precedences[i] + ";q=" + (1 - (qstep * i));
+        if (i > 0) {
+            this.acceptHeaderValue = this.acceptHeaderValue + ",";
         }
+        this.acceptHeaderValue = this.acceptHeaderValue + mimeqvalue;
     }
-};
+
+}
 
 RDFLoader.RDFLoader.prototype.registerParser = function(mediaType, parser) {
     this.parsers[mediaType] = parser;
@@ -8162,7 +8164,7 @@ SparqlParser.parser = (function(){
       }
       
       function parse_DescribeQuery() {
-        var result0, result1, result2, result3, result4;
+        var result0, result0b, result1, result2, result3, result4;
         var pos0;
         
         reportFailures++;
@@ -8177,6 +8179,12 @@ SparqlParser.parser = (function(){
           }
         }
         if (result0 !== null) {
+            result0b = []
+            result2 = parse_WS();
+            while (result2 !== null) {
+                result0b.push(result2);
+                result2 = parse_WS();
+            }
           result2 = parse_VarOrIRIref();
           if (result2 !== null) {
             result1 = [];
@@ -8200,6 +8208,12 @@ SparqlParser.parser = (function(){
           }
           if (result1 !== null) {
             result2 = [];
+              result0b = parse_WS();
+              while (result0b !== null) {
+                  result2.push(result0b);
+                  result0b = parse_WS();
+              }
+            result2 = []
             result3 = parse_DatasetClause();
             while (result3 !== null) {
               result2.push(result3);
@@ -24710,7 +24724,7 @@ RDFJSInterface.Graph.prototype.add = function(triple) {
     for(var i=0; i<this.actions.length; i++) {
         triple = this.actions[i](triple);
     }
-    
+
     var id = triple.subject.toString()+triple.predicate.toString()+triple.object.toString();
     if(!this.duplicates[id]) {
         this.duplicates[id] = true;

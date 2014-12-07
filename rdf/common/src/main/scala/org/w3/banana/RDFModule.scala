@@ -1,6 +1,5 @@
 package org.w3.banana
 
-import org.w3.banana.io.SparqlQueryResultsReader
 import io._
 import scala.concurrent.Future
 import scala.util.Try
@@ -32,6 +31,7 @@ trait SparqlOpsModule extends RDFModule {
 trait SparqlGraphModule extends RDFModule {
 
   implicit val sparqlGraph: SparqlEngine[Rdf, Try, Rdf#Graph]
+    with SparqlUpdate[Rdf,Try, Rdf#Graph]
 
 }
 
@@ -51,9 +51,16 @@ trait RDFXMLReaderModule extends RDFModule {
 
 trait TurtleReaderModule extends RDFModule {
 
+  implicit val turtleReader: RDFReader[Rdf, Try, Turtle]
+
+}
+
+trait TurtleReaderFutureModule extends RDFModule {
+
   implicit val turtleReader: RDFReader[Rdf, Future, Turtle]
 
 }
+
 
 trait NTriplesReaderModule extends RDFModule {
   implicit val ntriplesReader: RDFReader[Rdf, Try, NTriples]
@@ -93,9 +100,16 @@ trait RDFXMLWriterModule extends RDFModule {
 
 trait TurtleWriterModule extends RDFModule {
 
+  implicit val turtleWriter: RDFWriter[Rdf, Try, Turtle]
+
+}
+
+trait TurtleWriterFutureModule extends RDFModule {
+
   implicit val turtleWriter: RDFWriter[Rdf, Future, Turtle]
 
 }
+
 
 trait WriterSelectorModule extends RDFModule {
 

@@ -1,6 +1,6 @@
 package org.w3.banana.rdfstorew
 
-import org.w3.banana.{RDFStore => RDFStoreInterface, SparqlUpdate}
+import org.w3.banana.{RDFStore, RDFOps, SparqlUpdate}
 
 import scala.concurrent._
 import scala.language.postfixOps
@@ -8,33 +8,36 @@ import scala.scalajs.concurrent.JSExecutionContext.Implicits.queue
 import scala.scalajs.js
 import scala.scalajs.js.Dynamic.global
 import scala.util.Try
+import org.w3.banana.rdfstore.rjs
 
-class RDFStoreW()(implicit ops: RDFStoreOps) extends RDFStoreInterface[RDFStore, Future, js.Dynamic] with SparqlUpdate[RDFStore, Future, js.Dynamic] {
 
-  def executeQuery(store: js.Dynamic, sparql: String): Future[Any] = {
+class RDFStoreW()(implicit ops: RDFOps[JSStore]) extends RDFStore[JSStore, Future, rjs.Store] with SparqlUpdate[JSStore, Future, rjs.Store] {
+
+  def executeQuery(store: rjs.Store, sparql: String): Future[Any] = {
     val promise = Promise[Any]
 
-    store.applyDynamic("execute")(sparql, { (success: Boolean, res: js.Any) =>
+    store.execute(sparql,  (success: Boolean, res: js.Any) =>
       if (success) {
         promise.success(res)
       } else {
         promise.failure(new Exception("Error running query: " + res))
       }
-    })
+
+    )
 
     promise.future
   }
 
-  def executeQueryUnit(store: js.Dynamic, sparql: String): Future[Unit] = {
+  def executeQueryUnit(store: rjs.Store, sparql: String): Future[Unit] = {
     val promise = Promise[Unit]
-
-    store.applyDynamic("execute")(sparql, { (success: Boolean, res: js.Any) =>
+    def cb0(success: Boolean, res: Any): Promise[Unit] =
       if (success) {
         promise.success()
       } else {
         promise.failure(new Exception("Error running query: " + res))
       }
-    })
+
+    store.executeUnit(sparql, cb0 _)
 
     promise.future
   }
@@ -53,7 +56,7 @@ class RDFStoreW()(implicit ops: RDFStoreOps) extends RDFStoreInterface[RDFStore,
   // RDFStore-js doesn't support transactions
 
   /** Evaluates `body` in a read transaction. */
-  override def r[T](store: js.Dynamic, body: => T): Try[T] = Try {
+  override def r[T](store: rjs.Store, body: => T): Try[T] = Try {
     try {
       val result = body
       result
@@ -61,7 +64,7 @@ class RDFStoreW()(implicit ops: RDFStoreOps) extends RDFStoreInterface[RDFStore,
   }
 
   /** Evaluates `body` in a read/write transaction. */
-  override def rw[T](store: js.Dynamic, body: => T): Try[T] = Try {
+  override def rw[T](store: rjs.Store, body: => T): Try[T] = Try {
     try {
       val result = body
       result
@@ -70,16 +73,16 @@ class RDFStoreW()(implicit ops: RDFStoreOps) extends RDFStoreInterface[RDFStore,
 
 
   /** Executes a Construct query. */
-  override def executeConstruct(store: js.Dynamic, query: RDFStore#ConstructQuery, bindings: Map[String, RDFStore#Node]): Future[RDFStore#Graph] = {
+  override def executeConstruct(store: rjs.Store, query: JSStore#ConstructQuery, bindings: Map[String, JSStore#Node]): Future[JSStore#Graph] = {
     executeQuery(store, bindQuery(query, bindings)) map {
       g => {
-        new RDFStoreGraph(g.asInstanceOf[js.Dynamic])
+        new RDFStoreGraph(g.asInstanceOf[rjs.Graph])
       }
     }
   }
 
   /** Executes a Select query. */
-  override def executeSelect(store: js.Dynamic, query: RDFStore#SelectQuery, bindings: Map[String, RDFStore#Node]): Future[RDFStore#Solutions] = {
+  override def executeSelect(store: rjs.Store, query: JSStore#SelectQuery, bindings: Map[String, JSStore#Node]): Future[JSStore#Solutions] = {
     executeQuery(store, bindQuery(query, bindings)) map {
       solutions =>
         solutions.asInstanceOf[js.Array[js.Dynamic]].map[SPARQLSolutionTuple] {
@@ -89,7 +92,7 @@ class RDFStoreW()(implicit ops: RDFStoreOps) extends RDFStoreInterface[RDFStore,
   }
 
   /** Executes a Ask query. */
-  override def executeAsk(store: js.Dynamic, query: RDFStore#AskQuery, bindings: Map[String, RDFStore#Node]): Future[Boolean] = {
+  override def executeAsk(store: rjs.Store, query: JSStore#AskQuery, bindings: Map[String, JSStore#Node]): Future[Boolean] = {
     executeQuery(store, bindQuery(query, bindings)) map {
       b => {
         b.asInstanceOf[Boolean]
@@ -97,23 +100,23 @@ class RDFStoreW()(implicit ops: RDFStoreOps) extends RDFStoreInterface[RDFStore,
     }
   }
 
-  override def executeUpdate(store: js.Dynamic, query: RDFStore#UpdateQuery, bindings: Map[String, RDFStore#Node]): Future[Unit] = {
+  override def executeUpdate(store: rjs.Store, query: JSStore#UpdateQuery, bindings: Map[String, JSStore#Node]): Future[rjs.Store] = {
     executeQueryUnit(store, bindQuery(query, bindings)) map identity
+    Future.successful(store)
   }
 
   /**
    * To the graph at `uri`, removes the matching triples
    */
-  override def removeTriples(store: js.Dynamic, graph: RDFStore#URI, triples: Iterable[(RDFStore#NodeMatch, RDFStore#NodeMatch, RDFStore#NodeMatch)]): Future[Unit] = {
+  override def removeTriples(store: rjs.Store, graph: JSStore#URI, triples: Iterable[(JSStore#NodeMatch, JSStore#NodeMatch, JSStore#NodeMatch)]): Future[Unit] = {
     val promise = Promise[Unit]
-    val cb = {
-      (success: Boolean, res: Any) =>
-        if (success) {
-          promise.success()
-        } else {
-          promise.failure(new Exception("Error deleting triples into the store: " + res))
-        }
-    }
+    def callback(success: Boolean, res: Any): Promise[Unit] =
+      if (success) {
+        promise.success()
+      } else {
+        promise.failure(new Exception("Error deleting triples into the store: " + res))
+      }
+
 
     val graphToRemove = ops.emptyGraph
     for(triple <- triples) {
@@ -125,11 +128,11 @@ class RDFStoreW()(implicit ops: RDFStoreOps) extends RDFStoreInterface[RDFStore,
     }
 
 
-      if (graph == null) {
-        store.applyDynamic("delete")(graphToRemove.graph, cb)
-      } else {
-        store.applyDynamic("delete")(graphToRemove.graph, graph.valueOf, cb)
-      }
+    if (graph == null) {
+      store.delete(graphToRemove.graph, callback _)
+    } else {
+      store.delete(graphToRemove.graph, graph.valueOf, callback _)
+    }
 
     promise.future
   }
@@ -138,79 +141,79 @@ class RDFStoreW()(implicit ops: RDFStoreOps) extends RDFStoreInterface[RDFStore,
    * To the graph at `uri`, appends the content of `graph`. If there was
    * no previous graph, this would create it.
    */
-  override def appendToGraph(store: js.Dynamic, graph: RDFStore#URI, triples: RDFStore#Graph): Future[Unit] = {
+  override def appendToGraph(store: rjs.Store, graph: JSStore#URI, triples: RDFStoreGraph): Future[Unit] = {
     val promise = Promise[Unit]
-    val cb = {
-      (success: Boolean, res: Any) =>
+    def cb2(success: Boolean, res: Any): Promise[Unit] =
         if (success) {
           promise.success()
         } else {
           promise.failure(new Exception("Error inserting triples into the store: " + res))
         }
-    }
+
 
     if (graph == null) {
-      store.applyDynamic("insert")(triples.graph, cb)
+      store.insert(triples.graph, cb2 _)
     } else {
-      store.applyDynamic("insert")(triples.graph, graph.valueOf, cb)
+      store.insert(triples.graph, graph.valueOf, cb2 _)
     }
 
     promise.future
   }
 
   /** Removes the graph at `uri`. */
-  override def removeGraph(store: js.Dynamic, graph: RDFStore#URI): Future[Unit] = {
+  override def removeGraph(store: rjs.Store, graph: JSStore#URI): Future[Unit] = {
     val promise = Promise[Unit]
-    val cb = {
-      (success: Boolean, res: Any) =>
+    val cb3 = (success: Boolean, res: js.Any) =>
         if (success) {
           promise.success()
         } else {
           promise.failure(new Exception("Error cleaning graph from the store store: " + res))
         }
-    }
+
 
     if (graph == null) {
-      store.applyDynamic("clear")(cb)
+      store.clear(cb3)
     } else {
-      store.applyDynamic("clear")(graph.valueOf, cb)
+      store.clear(graph.valueOf, cb3)
     }
 
     promise.future
   }
 
+
   /** Gets the graph at `uri`. */
-  override def getGraph(store: js.Dynamic, uri: RDFStore#URI): Future[RDFStore#Graph] = {
-    val promise = Promise[RDFStoreGraph]
-    val cb = {
-      (success: Boolean, res: js.Dynamic) =>
+  override def getGraph(store: rjs.Store, uri: RDFStoreNamedNode): Future[JSStore#Graph] = {
+    val promise = Promise[JSStore#Graph]
+    store.graph(uri.valueOf, (success: Boolean, res: js.Any) =>
         if (success) {
-          promise.success(new RDFStoreGraph(res))
+          promise.success(new RDFStoreGraph(res.asInstanceOf[rjs.Graph]))
         } else {
           promise.failure(new Exception("Error exporting data as a RDF graph"))
-        }
-    }
-    store.applyDynamic("graph")(uri.valueOf, cb)
+        } )
     promise.future
   }
 
 }
 
-object RDFStoreW {
+object RDFStoreJS {
+  def rdfStoreW(implicit ops: RDFOps[JSStore]) = new RDFStoreW()(JSStore.ops)
+}
 
-  var rdfstorejs:js.Dynamic = makeRDFStoreJS(Map())
+class RDFStoreJS(options: Map[String, Any]) {
 
-  val rdf = rdfstorejs.selectDynamic("rdf")
+  val rdfstorejs: rjs.Store = makeRDFStoreJS(options)
+
+//  val rdf = rdfstorejs.asInstanceOf[js.Dynamic].selectDynamic("rdf")
+//
+//  val rdf_api = rdfstorejs.asInstanceOf[js.Dynamic].selectDynamic("rdf").selectDynamic("api")
 
 
-  val rdf_api = rdfstorejs.selectDynamic("rdf").selectDynamic("api")
+//  def apply(options: Map[String, Any]): RDFStoreW = {
+//    rdfstorejs = makeRDFStoreJS(options)
+//
+//  }
 
-  def apply(options: Map[String, Any]): RDFStoreW = {
-    rdfstorejs = makeRDFStoreJS(options)
-    new RDFStoreW()
-  }
-
-  def makeRDFStoreJS(options: Map[String, Any]):js.Dynamic = {
+  def makeRDFStoreJS(options: Map[String, Any]): rjs.Store = {
     val dic = options.foldLeft[js.Dictionary[Any]](js.Dictionary())({
       case (acc, (key, value)) =>
         acc.update(key, value); acc
@@ -224,8 +227,9 @@ object RDFStoreW {
     } else {
       global.rdfstore
     }
-    var newRdfstorejs:js.Dynamic = null
-    rdfstore.applyDynamic("create")(dic, (store: js.Dynamic) => promise.success{
+    println("store="+rdfstore)
+    var newRdfstorejs:rjs.Store = null
+    rdfstore.applyDynamic("create")(dic, (store: rjs.Store) => promise.success{
       newRdfstorejs = store
     })
 
